@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Raining Cats and Dogs: Sprite Edition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Arial Black', sans-serif; }
+        
+        /* UI Layers */
+        #ui {
+            position: absolute; top: 20px; left: 20px; color: #FFD700;
+            font-size: 28px; text-shadow: 3px 3px 0px #C00; z-index: 10;
+            pointer-events: none;
+            display: flex; gap: 40px;
+        }
+        .stat-box { display: flex; flex-direction: column; }
+        .label { font-size: 14px; color: #ccc; margin-bottom: 5px; }
+        
+        /* Overlays */
+        .overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); display: flex; flex-direction: column;
+            justify-content: center; align-items: center; color: white; z-index: 20;
+            text-align: center;
+        }
+        
+        h1 { margin: 0 0 20px 0; font-size: 56px; color: #3498db; text-shadow: 0 0 15px #fff; line-height: 1; }
+        h2 { font-size: 36px; color: #e74c3c; margin: 10px 0; }
+        p { font-size: 20px; margin: 5px; color: #ccc; }
+        .danger { color: #e74c3c; font-weight: bold; font-size: 24px; }
+        .instruction { margin-top: 20px; font-size: 18px; color: #ddd; max-width: 600px; }
+        
+        .btn { 
+            padding: 15px 50px; background: #e74c3c; color: white; border: none; 
+            font-size: 32px; cursor: pointer; border-radius: 50px; margin-bottom: 10px; 
+            box-shadow: 0 0 20px #c0392b; transition: transform 0.2s;
+            font-family: 'Arial Black', sans-serif; text-transform: uppercase;
+        }
+        .btn:hover { transform: scale(1.1); background: #c0392b; }
+
+        #game-over { display: none; }
+        #win-screen { display: none; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div class="stat-box">
+            <span class="label">PETS (Goal: 30)</span>
+            <span id="score">0</span>
+        </div>
+        <div class="stat-box">
+            <span class="label">TIME</span>
+            <span id="timer" style="color: white">60</span>
+        </div>
+        <div class="stat-box">
+             <span class="label">ALTITUDE</span>
+             <span id="alt-val">0m</span>
+        </div>
+    </div>
+    
+    <div id="start-screen" class="overlay">
+        <h1>RAINING CATS<br>AND DOGS</h1>
+        <button class="btn" onclick="startGame()">LAUNCH</button>
+        <p class="instruction">Catch 30 pets in 60 seconds.<br>Dodge the buildings and kryptonite.</p>
+    </div>
+
+    <div id="game-over" class="overlay">
+        <h1 style="color: #e74c3c;">GAME OVER</h1>
+        <p class="danger" id="death-reason">TIME'S UP!</p>
+        <p>Pets Rescued: <span id="final-score">0</span> / 30</p>
+        <button class="btn" onclick="resetGame()">TRY AGAIN</button>
+    </div>
+
+    <div id="win-screen" class="overlay">
+        <h1 style="color: #2ecc71;">SUCCESS!</h1>
+        <h2 style="color: #f1c40f;">CUTENESS OVERLOAD!</h2>
+        <p>You caught too many pets!</p>
+        <p>Time Left: <span id="time-left-score">0</span>s</p>
+        <button class="btn" onclick="resetGame()">PLAY AGAIN</button>
+    </div>
+
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- Game Variables ---
+        let gameActive = false;
+        let score = 0;
+        let startTime = 0;
+        let timeLeft = 60;
+        const GOAL = 30;
+        const MAX_TIME = 60;
+        const keys = {};
+        
+        // Speeds
+        const SPEED_FORWARD = 1.0;
+        const SPEED_VERTICAL = 1.0;
+        const SPEED_HORIZONTAL = 0.9;
+        
+        // World Objects
+        let pets = [];
+        let obstacles = [];
+        let buildings = [];
+
+        // --- Scene Setup ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x2c3e50);
+        scene.fog = new THREE.Fog(0x2c3e50, 40, 300);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+        sun.position.set(20, 100, 10);
+        scene.add(sun);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8)); // Brighter light for the sprite
+
+        // --- Player (Sprite Based) ---
+        const player = new THREE.Group();
+        
+        // FUNCTION: Create the Pixel Art Texture in code
+        // This recreates your uploaded image (Black hair, Blue suit, Red Cape)
+        function createHeroSprite() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+
+            // 1. Draw Cape (Red block at bottom)
+            ctx.fillStyle = '#b30000'; // Darker Red
+            ctx.fillRect(20, 24, 24, 32); 
+            ctx.fillStyle = '#ff0000'; // Bright Red Center
+            ctx.fillRect(22, 24, 20, 28);
+
+            // 2. Draw Shoulders/Arms (Blue on sides)
+            ctx.fillStyle = '#0000cc'; // Dark Blue
+            ctx.fillRect(14, 18, 36, 12);
+            ctx.fillStyle = '#3333ff'; // Light Blue highlight
+            ctx.fillRect(16, 18, 32, 8);
+
+            // 3. Draw Head (Black square at top)
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(24, 8, 16, 16);
+            
+            return canvas;
+        }
+
+        // Apply Texture
+        // ******************************************************
+        // NOTE: To use your own image file, delete the line below 
+        // and replace it with: const texture = new THREE.TextureLoader().load('New Piskel (3).png');
+        // ******************************************************
+        const texture = new THREE.CanvasTexture(createHeroSprite());
+        
+        // Pixel Art Settings
+        texture.magFilter = THREE.NearestFilter;
+        texture.minFilter = THREE.NearestFilter;
+
+        // Create the Mesh (Plane)
+        // We use a plane instead of a Sprite so we can rotate it flat
+        const material = new THREE.MeshStandardMaterial({ 
+            map: texture, 
+            transparent: true, 
+            side: THREE.DoubleSide,
+            alphaTest: 0.5 
+        });
+        
+        // Size: 5x5 units (Adjust based on preference)
+        const spriteMesh = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), material);
+        
+        // Rotate -90 deg on X so it lies flat, flying "forward"
+        spriteMesh.rotation.x = -Math.PI / 2; 
+        
+        // Add to player group
+        player.add(spriteMesh);
+        scene.add(player);
+
+        // --- Helper Functions ---
+        function randomRange(min, max) { return Math.random() * (max - min) + min; }
+
+        // --- World Creation ---
+        function createBuildings() {
+            buildings.forEach(b => scene.remove(b));
+            buildings = [];
+            for(let i=0; i<120; i++) {
+                const h = 50 + Math.random() * 120;
+                const b = new THREE.Mesh(new THREE.BoxGeometry(15, h, 15), new THREE.MeshStandardMaterial({color: 0x1a2a3a}));
+                b.userData = { height: h }; 
+                b.position.set(Math.random() > 0.5 ? 40 : -40, h/2 - 20, -i * 25);
+                scene.add(b);
+                buildings.push(b);
+            }
+        }
+
+        function createPets() {
+            pets.forEach(p => scene.remove(p));
+            pets = [];
+            for(let i=0; i<6; i++) {
+                const isCat = Math.random() > 0.5;
+                const pet = new THREE.Mesh(new THREE.SphereGeometry(3.0, 16, 16), new THREE.MeshStandardMaterial({ color: isCat ? 0xffa500 : 0x8b4513 }));
+                resetObject(pet);
+                scene.add(pet);
+                pets.push(pet);
+            }
+        }
+
+        function createObstacles() {
+            obstacles.forEach(o => scene.remove(o));
+            obstacles = [];
+            for(let i=0; i<8; i++) {
+                const box = new THREE.Mesh(new THREE.BoxGeometry(12, 12, 12), new THREE.MeshStandardMaterial({ color: 0x00ff00, emissive: 0x004400, roughness: 0.2 }));
+                resetObject(box);
+                scene.add(box);
+                obstacles.push(box);
+            }
+        }
+
+        function resetObject(obj) {
+            obj.position.set(randomRange(-50, 50), randomRange(50, 280), player.position.z - randomRange(100, 300));
+        }
+
+        // --- Game Control ---
+        window.startGame = function() {
+            document.getElementById('start-screen').style.display = 'none';
+            resetGameLogic();
+            animate();
+        };
+
+        window.resetGame = function() {
+            document.getElementById('game-over').style.display = 'none';
+            document.getElementById('win-screen').style.display = 'none';
+            resetGameLogic();
+            animate();
+        };
+
+        function resetGameLogic() {
+            score = 0;
+            timeLeft = MAX_TIME;
+            startTime = Date.now();
+            document.getElementById('score').innerText = "0";
+            document.getElementById('timer').innerText = MAX_TIME;
+            document.getElementById('timer').style.color = "white";
+
+            player.position.set(0, 120, 0);
+            createBuildings();
+            createPets();
+            createObstacles();
+            gameActive = true;
+        }
+
+        function triggerGameOver(reason) {
+            gameActive = false;
+            document.getElementById('final-score').innerText = score;
+            document.getElementById('death-reason').innerText = reason;
+            document.getElementById('game-over').style.display = 'flex';
+        }
+
+        function triggerWin() {
+            gameActive = false;
+            document.getElementById('time-left-score').innerText = Math.ceil(timeLeft);
+            document.getElementById('win-screen').style.display = 'flex';
+        }
+
+        window.addEventListener('keydown', (e) => { keys[e.code] = true; });
+        window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+        // --- Main Loop ---
+        function animate() {
+            if(!gameActive) return;
+            requestAnimationFrame(animate);
+
+            // Timer
+            const now = Date.now();
+            timeLeft = MAX_TIME - (now - startTime) / 1000;
+            if (timeLeft <= 0) { timeLeft = 0; triggerGameOver("TIME'S UP!"); return; }
+            const timerEl = document.getElementById('timer');
+            timerEl.innerText = Math.ceil(timeLeft);
+            if(timeLeft < 10) timerEl.style.color = "#e74c3c";
+
+            // Movement
+            player.position.z -= SPEED_FORWARD;
+            if (keys['KeyW'] || keys['ArrowUp']) player.position.y += SPEED_VERTICAL;
+            if (keys['KeyS'] || keys['ArrowDown']) player.position.y -= SPEED_VERTICAL;
+            if (keys['KeyA'] || keys['ArrowLeft']) player.position.x -= SPEED_HORIZONTAL;
+            if (keys['KeyD'] || keys['ArrowRight']) player.position.x += SPEED_HORIZONTAL;
+
+            player.position.x = Math.max(-60, Math.min(60, player.position.x));
+            player.position.y = Math.max(10, Math.min(300, player.position.y));
+            document.getElementById('alt-val').innerText = Math.floor(player.position.y);
+
+            // Camera
+            camera.position.lerp(new THREE.Vector3(player.position.x, player.position.y + 12, player.position.z + 25), 0.15);
+            camera.lookAt(player.position.x, player.position.y, player.position.z - 20);
+
+            // Logic
+            pets.forEach(p => {
+                p.position.y -= 0.2;
+                if(p.position.distanceTo(player.position) < 8.0) { 
+                    score++;
+                    document.getElementById('score').innerText = score;
+                    if (score >= GOAL) triggerWin();
+                    resetObject(p);
+                }
+                if(p.position.y < -50 || p.position.z > player.position.z + 20) resetObject(p);
+            });
+
+            obstacles.forEach(obs => {
+                obs.position.y -= 0.8; 
+                obs.rotation.x += 0.05; obs.rotation.y += 0.05;
+                if(obs.position.distanceTo(player.position) < 8.0) triggerGameOver("GAME OVER");
+                if(obs.position.y < -50 || obs.position.z > player.position.z + 20) resetObject(obs);
+            });
+
+            buildings.forEach(b => {
+                if(b.position.z > player.position.z + 40) b.position.z -= 3000;
+                const bHalfWidth = 7.5; const bHalfDepth = 7.5; const bTop = b.position.y + (b.userData.height / 2);
+                if (Math.abs(player.position.x - b.position.x) < bHalfWidth + 1.5 && Math.abs(player.position.z - b.position.z) < bHalfDepth + 1.5) {
+                    if (player.position.y < bTop) triggerGameOver("GAME OVER");
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
